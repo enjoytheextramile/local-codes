@@ -1,0 +1,107 @@
+# glue_process_orders.py
+# Glue job to process customer and payment events from S3
+# Demonstrates handling partition skew, broadcast joins, DAG optimization,
+# checkpointing, caching, and batch processing for last 30 days.
+
+import sys
+from datetime import datetime, timedelta
+from pyspark.context import SparkContext
+from pyspark.sql import SparkSession, Window
+from pyspark.sql.functions import col, from_json, explode, current_date, lit, sum as Fsum
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, TimestampType, MapType
+
+# Initialize Spark session
+sc = SparkContext()
+spark = SparkSession.builder.appName("Ecommerce30DayReport").getOrCreate()
+
+# Checkpointing directory (to break lineage)
+sc.setCheckpointDir("s3://ecommerce-processed/checkpoints/")
+
+# -----------------------------
+# 1️⃣ Read customer and payment details from S3 (last 30 days)
+# -----------------------------
+today = datetime.utcnow().date()
+start_date = today - timedelta(days=30)
+
+customer_path = "s3://ecommerce-raw-events/customer_details/*"
+payment_path = "s3://ecommerce-raw-events/payment_details/*"
+
+# Define schemas
+customer_schema = StructType([
+    StructField("order_id", StringType()),
+    StructField("customer_id", StringType()),
+    StructField("customer_details", MapType(StringType(), StringType())),
+    StructField("event_time", StringType()),
+    StructField("event_id", StringType())
+])
+
+payment_schema = StructType([
+    StructField("order_id", StringType()),
+    StructField("customer_id", StringType()),
+    StructField("payment_details", MapType(StringType(), StringType())),
+    StructField("event_time", StringType()),
+    StructField("event_id", StringType())
+])
+
+df_customers = spark.read.json(customer_path, schema=customer_schema)
+df_payments = spark.read.json(payment_path, schema=payment_schema)
+
+# Filter last 30 days based on event_time
+df_customers = df_customers.filter(col("event_time") >= lit(start_date.isoformat()))
+df_payments = df_payments.filter(col("event_time") >= lit(start_date.isoformat()))
+
+# -----------------------------
+# 2️⃣ Fix Partition Skew: Repartition by customer_id
+# -----------------------------
+# If certain customers dominate events (hot keys), repartition to distribute load
+df_customers = df_customers.repartition(10, col("customer_id"))
+df_payments = df_payments.repartition(10, col("customer_id"))
+
+# -----------------------------
+# 3️⃣ Broadcast join small dataset: payment info per order
+# -----------------------------
+# Assuming payments is smaller than customers (typical skew), broadcast join
+from pyspark.sql.functions import broadcast
+df_joined = df_customers.join(
+    broadcast(df_payments),
+    on=["order_id","customer_id"],
+    how="left"
+)
+
+# -----------------------------
+# 4️⃣ Caching for repeated transformations
+# -----------------------------
+df_joined.cache()
+
+# -----------------------------
+# 5️⃣ Create daily summary: total orders and revenue per customer
+# -----------------------------
+from pyspark.sql.functions import to_date, col, sum as Fsum, countDistinct
+
+df_summary = df_joined.withColumn("date", to_date(col("event_time"))) \
+    .groupBy("customer_id","date") \
+    .agg(
+        countDistinct("order_id").alias("total_orders"),
+        Fsum(col("payment_details.amount").cast(IntegerType())).alias("total_revenue")
+    )
+
+# -----------------------------
+# 6️⃣ Break lineage: checkpoint and write to disk
+# -----------------------------
+df_summary.checkpoint()
+df_summary.write.mode("overwrite").parquet("s3://ecommerce-processed/daily_summary/")
+
+# -----------------------------
+# 7️⃣ Generate ad-hoc report: last 30 days orders
+# -----------------------------
+# Temporal dependency: orders may be late or out-of-order, so we aggregate in batches
+window = Window.partitionBy("customer_id").orderBy("date")
+df_report = df_summary.withColumn("cumulative_orders", Fsum("total_orders").over(window)) \
+                      .withColumn("cumulative_revenue", Fsum("total_revenue").over(window))
+
+# -----------------------------
+# 8️⃣ Write final report to S3
+# -----------------------------
+df_report.write.mode("overwrite").parquet("s3://ecommerce-processed/reports/last_30_days/")
+
+print("Glue processing completed: last 30 days report generated!")
