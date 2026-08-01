@@ -1,0 +1,153 @@
+ Good, you've got a solid structure in mind. Here's how I'd organize your presentation around those 4 points:
+
+  ---
+  1. Networking & Infrastructure Setup
+
+  VPC: 11.0.0.0/16
+  │
+  ├── Public Subnet A (AZ-1)
+  │   └── NAT Gateway (Elastic IP)
+  │
+  ├── Public Subnet B (AZ-2)
+  │
+  ├── Private Subnet A (AZ-1)
+  │   ├── MSK Broker 1
+  │   └── Producer Lambda (must be in same subnet as brokers)
+  │
+  └── Private Subnet B (AZ-2)
+      └── MSK Broker 2
+
+  Route Tables:
+    Public  → 0.0.0.0/0 → Internet Gateway (for inbound access)
+    Private → 0.0.0.0/0 → NAT Gateway (for MSK → Lambda trigger)
+
+  Security Groups:
+    MSK SG ←→ EC2 SG (bidirectional all traffic, for topic creation)
+    MSK SG ←→ Lambda SG (producer publishes, consumer gets triggered)
+
+  Talking point: NAT Gateway is the key piece — without it, MSK (in private subnet) cannot trigger the Consumer Lambda (AWS service
+  endpoint outside VPC).
+
+  ---
+  2. Producer & Consumer Logic
+
+  PRODUCER:
+    API Gateway POST → SQS (buffer) → Lambda
+
+    Lambda code:
+      from kafka import KafkaProducer
+      producer = KafkaProducer(
+          bootstrap_servers=[broker1, broker2],
+          value_serializer=lambda v: json.dumps(v).encode('utf-8')
+      )
+      for record in event['Records']:       # SQS may batch multiple msgs
+          msg = json.loads(record['body'])
+          producer.send(topic, value=msg)
+      producer.flush()                       # ensure nothing left in buffer
+
+    Key configs:
+      - Lambda timeout: 2 min (to handle batched SQS messages)
+      - SQS visibility timeout: 240s (must be > Lambda timeout)
+      - SQS batch size: 5, max concurrency: 2
+      - Lambda layer: kafka-python (not in default runtime)
+      - Lambda runs IN private VPC (same subnet as brokers)
+
+  CONSUMER:
+    MSK trigger → Lambda → Kinesis Firehose
+
+    Lambda code:
+      firehose = boto3.client('firehose')
+      for partition_key in event['records']:
+          for record in event['records'][partition_key]:
+              value = base64.b64decode(record['value']).decode('utf-8')
+              data = json.dumps(value) + '\n'    # newline between records
+              firehose.put_record(
+                  DeliveryStreamName=stream_name,
+                  Record={'Data': data.encode('utf-8')}
+              )
+
+    Key configs:
+      - MSK trigger: batch=10, window=4s, starting position=LATEST
+      - Lambda timeout: 4 min
+      - Consumer Lambda does NOT run in VPC (NAT GW handles trigger)
+      - Newline added in Lambda code itself (no extra transform Lambda in Firehose)
+
+  ---
+  3. Why SQS + Firehose (Not Direct)
+
+  Why SQS between API Gateway and Lambda?
+  Without SQS:  API GW → Lambda directly
+    Problem: Traffic spike → Lambda can't scale fast enough → 429 throttling
+
+  With SQS:     API GW → SQS → Lambda
+    SQS absorbs burst, Lambda consumes at its own pace
+    Batch size + max concurrency = controlled processing
+
+  Why Firehose between Lambda and S3?
+  Without Firehose:  Lambda → S3 directly
+    Problem: 1 record = 1 file = small file problem in data lake
+    1000 events/min = 1000 tiny files = slow queries, high S3 API cost
+
+  With Firehose:     Lambda → Firehose → S3
+    Firehose buffers: flush at 2MB OR 120 seconds (whichever first)
+    Batches hundreds of records into properly sized files
+    Also adds partitioned folder structure: year/month/day/hour/
+
+  ---
+  4. Spark Streaming Scenarios You Can Present
+
+  Since you have strong Spark knowledge, here are the scenarios you can explain as downstream processing of the S3 data lake (or if
+  consuming directly from Kafka via Spark Structured Streaming):
+
+  Late Events
+
+  Event occurred at 10:00 AM but arrived at 10:45 AM
+
+  Solution: Watermarking
+    df.withWatermark("event_time", "1 hour")
+      .groupBy(window("event_time", "10 minutes"))
+
+  - Events within watermark threshold → processed into correct window
+  - Events beyond threshold → dropped (too late to matter)
+  - Trade-off: longer watermark = more state to maintain
+
+  Out-of-Order Events
+
+  Event A (10:01) arrives after Event B (10:05)
+
+  Solution: Watermark + Event-time windowing (not processing-time)
+    - Window by event_time, not arrival_time
+    - Watermark holds window open long enough for stragglers
+    - Spark sorts within window before aggregation
+
+  Duplicate Events
+
+  Same event delivered twice (at-least-once delivery from Kafka)
+
+  Solution: Deduplication
+    df.dropDuplicates(["event_id", "event_time"])
+
+    Or idempotent writes:
+    - Write with mode("append") + partition by unique key
+    - Use Delta Lake MERGE for upsert semantics
+
+    Kafka itself: consumer group + offset tracking prevents reprocessing
+    But MSK → Lambda is at-least-once, so Lambda/downstream must handle it
+
+  Spike/Surge Events
+
+  Normal: 100 events/sec → Spike: 10,000 events/sec
+
+  Already handled by architecture:
+    - SQS absorbs burst (unlimited queue depth)
+    - Lambda concurrency limit prevents downstream overwhelm
+    - Firehose auto-scales
+    - MSK partitions distribute load across brokers
+
+  Spark side:
+    - maxOffsetsPerTrigger limits how much Spark reads per micro-batch
+    - Adaptive Query Execution (AQE) handles skewed partitions
+    - Back-pressure: Spark reads at its own pace from Kafka offsets
+
+
+
