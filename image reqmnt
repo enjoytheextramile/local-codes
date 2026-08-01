@@ -1,0 +1,106 @@
+ 1. Source / API Constraints
+
+  ┌───────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────────┐
+  │                       Question                        │                            Why it matters                            │
+  ├───────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ What's the API rate limit? (requests/sec, daily       │ Determines concurrency ceiling — 20 threads is pointless if API      │
+  │ quota)                                                │ allows 5 req/s                                                       │
+  ├───────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Auth mechanism? (API key, OAuth, token rotation)      │ Impacts retry logic and connection pooling                           │
+  ├───────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Is pagination involved? (offset, cursor, next token)  │ Affects how you discover/enumerate the 1000+ URLs                    │
+  ├───────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Are responses idempotent? Can you re-request safely?  │ Determines retry strategy                                            │
+  ├───────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Does the API return image bytes directly or a         │ Changes download pattern entirely                                    │
+  │ presigned URL?                                        │                                                                      │
+  ├───────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────────┤
+  │ Expected error codes? (429 Too Many Requests, 503)    │ Design backoff strategy upfront                                      │
+  └───────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────┘
+
+  2. Image Characteristics
+
+  ┌─────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────┐
+  │                          Question                           │                         Why it matters                          │
+  ├─────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ What are the image dimensions? (100KB vs 50MB each)         │ Memory management — can you hold N images in RAM                │
+  │                                                             │ simultaneously?                                                 │
+  ├─────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Format? (JPEG, PNG, TIFF, DICOM)                            │ Some formats need special libs, compression ratios differ       │
+  ├─────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Total payload size? (1K × 200KB = 200MB vs 1K × 50MB =      │ Disk provisioning, streaming vs buffering                       │
+  │ 50GB)                                                       │                                                                 │
+  ├─────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Are images uniform or variable in size?                     │ Affects load balancing across workers                           │
+  └─────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────┘
+
+  3. Storage & Destination
+
+  ┌───────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────────────┐
+  │                         Question                          │                          Why it matters                          │
+  ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Where do converted images land? (local disk, S3, GCS,     │ Local = simple writes; cloud = async uploads become another I/O  │
+  │ ADLS)                                                     │ stage                                                            │
+  ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Retention policy? (ephemeral processing vs long-term      │ Lifecycle rules, compression, storage tier                       │
+  │ archive)                                                  │                                                                  │
+  ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Naming convention / directory structure?                  │ Partitioning strategy (by date, by batch, by source ID)          │
+  ├───────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────────────┤
+  │ Do we keep originals or only B&W?                         │ 2x storage vs 1x — informs cleanup logic                         │
+  └───────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────┘
+
+  4. Downstream Consumption
+
+  ┌─────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────┐
+  │                          Question                           │                       Why it matters                       │
+  ├─────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Who/what consumes the B&W images? (ML model, report, UI)    │ Determines output format, quality, resolution              │
+  ├─────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Latency requirements? (batch OK vs near-real-time)          │ Batch = simple; real-time = pipeline/streaming design      │
+  ├─────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Is ordering important? (image 1 must finish before image 2) │ Ordered = queue with sequence; unordered = fire-and-forget │
+  ├─────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────┤
+  │ Output format/quality? (lossy JPEG 80% vs lossless PNG)     │ Affects CPU time and storage size                          │
+  └─────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────┘
+
+  5. Infrastructure & Constraints
+
+  ┌────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────┐
+  │                        Question                        │                         Why it matters                          │
+  ├────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ What machine runs this? (laptop, EC2, Lambda, k8s pod) │ Dictates available cores, memory ceiling, execution time limits │
+  ├────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Available memory?                                      │ Constrains how many images you process concurrently             │
+  ├────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Network bandwidth? (office wifi vs 10Gbps VPC)         │ Bottleneck could be network, not threads                        │
+  ├────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Fault tolerance? (can we resume or must restart?)      │ Checkpoint/bookmark design                                      │
+  ├────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+  │ Observability? (logging, metrics, alerting)            │ Production-readiness expectations                               │
+  └────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────┘
+
+  ---
+  How this changes the design
+
+  Scenario A: Small images, lenient API, local storage
+  → Simple ThreadPool(20) + ProcessPool(cpu_count), done in minutes
+
+  Scenario B: Large images, strict rate limit (5 req/s), S3 destination
+  → Semaphore(5) + streaming downloads + chunked upload + DLQ for failures
+
+  Scenario C: Real-time consumption, images arrive continuously
+  → Async producer-consumer with asyncio, backpressure, and a message queue
+
+  Scenario D: 50GB total payload, Lambda with 512MB RAM
+  → Stream-process one image at a time, no batching in memory
+
+  ---
+  Interview framing
+
+  ▎ "Before I design the solution, I'd want to understand the constraints because the architecture varies significantly. A 200MB
+  ▎ batch on a beefy EC2 is a completely different problem than 50GB on a Lambda with a 5 req/s rate limit. The concurrency model,
+  ▎ error handling, memory management, and even the choice of sync vs async all depend on these answers."
+
+  This demonstrates you think like a data engineer (systems thinking, trade-offs, production-readiness) rather than just a coder who
+  jumps to ThreadPoolExecutor.
