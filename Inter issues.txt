@@ -1,0 +1,81 @@
+Inter issues 
+
+
+1. What is so complex which separates your project from others.
+Complexity
+
+
+
+
+Why Outlook - 
+Why watch scenario
+105 columns
+Transformations
+
+
+2. Why it is not like any other database
+
+
+
+3. If you can show through a PPT.
+
+
+
+4. Streaming platform
+
+
+
+5. What about AI, how is the scope of learning there?
+
+
+
+
+
+
+
+
+although the process of transformation is not some alien process its like any other transformation silver layer process,            
+  but its like a complex set of scenario studded into a well functioning smooth machine. with numerous parts , which are in itself    
+  can be called a separate process. and its a time series of data with more than 120 columns and other than major sub process there   
+  are numerous edge cases which were handle properly.                                                                                 
+  like reinstatement logic                                                                                                            
+  like deduplication logic                                                                                                            
+  like history adhoc(although that is one major subprocess )                                                                          
+  like cdc logic and rating based logic window and ratg action based windows                                                          etc.                                                                                                                            
+  and maintaining a below 1% cumulative monthly error rate on such complex and wide data is challenging part                           
+ 
+⏺ Yes, that's a much more honest and grounded way to frame it. Let me sharpen it a bit based on what I know from your actual code.
+ 
+  ---                                                                                                                                 
+  Your framing, tightened up
+  The transformation itself isn't exotic — it's a source-vs-target comparison like any silver layer CDC process. What makes it hard
+  is:                                                                                                                                 
+  Scale of the decision space. 120+ columns, and the action type depends on comparing specific subsets of those columns across source 
+  and target. It's not one comparison — it's multiple independent comparisons (outlook fields, watch fields, default flags, rating
+  symbols) that each produce their own action, and they all have to be evaluated for every record.                                    
+  Number of distinct scenarios. You have 15+ action types (OR, OP, WP, WD, DP, DR, DM, WM, UP, DG, AF, NW, CF...), each with its own  
+  set of conditions. And these aren't simple flag checks — reinstatement logic alone has to figure out if a withdrawn rating came back
+   at the same level (AF), higher (UP), or lower (DG). That requires comparing rating ordinals, not just strings.                     
+  Edge cases are the real volume of work:                                                                                             
+  - Deduplication when the same rating shows up in both hourly Kafka and daily batch
+  - Reinstatement — withdrawn then re-rated, with direction detection                                                                 
+  - Same-day reversals (watch placed and removed within one batch)   
+  - FCA retroactive corrections against historical data                                                                               
+  - History/adhoc backfills that need to replay the same logic against old data                                                       
+  - Null handling across PySpark (4 null combinations per field comparison, across many fields)                                       
+  - CDC with both rating_id-based windows and action_dt-based windows depending on the scenario                                       
+  The real achievement is reliability, not cleverness. Sub-1% monthly error rate across all these scenarios, on 120+ column           
+  time-series data, with hourly runs — that's the hard part. Any one rule is simple. Keeping all of them correct together, across edge
+   cases, across months of production data, is what took the effort.                                                                  
+  ---             
+  How I'd say it in 60 seconds in an interview
+Maintaining a complex piece of code which tightly coupled columns and there relations
+   "The core process is a standard silver-layer CDC transformation — compare incoming rating data against the target table and derive
+    what changed. What makes it complex isn't any single piece of logic, it's that there are about 15 different action types the     
+   system needs to classify, each with its own rule set spread across dedicated subscripts — default handling, outlook changes, watch
+    placements, reinstatements. On top of that you have dedup logic across hourly and daily sources, retroactive regulatory          
+   corrections, history backfills that replay the same logic on old data, and all of this on a 120+ column dataset running hourly. 
+   Each individual rule is straightforward, but the challenge is keeping them all working together correctly — we maintain under 1%
+   cumulative monthly error rate across all of it, and that's what I'm most proud of."
+ 
+  That's real. No fluff.                                                                                                              

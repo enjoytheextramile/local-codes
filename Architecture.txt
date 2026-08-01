@@ -1,0 +1,689 @@
+Architecture-
+
+
+Kafka Notes- from functional point of view
+
+
+
+
+
+1. Message storage and offset working -
+
+so, my understanding->consumer asks this offset- Kafka ->goes to Topic -> to partition ->
+
+within partition find index file which represent that offset-> get the byte position?
+
+Term- distributed append only commit log
+
+
+
+2. Diagrammatic representation –
+
+append only commit index
+
+From RRR pov- producer is a sql which writes to the offset and kafka raw rating is the consumer.
+
+Point -
+
+Kafka does not delete data when consumers read it.
+
+It deletes data only based on retention policy.
+
+
+
+3. Issues -
+
+  a. duplicity – producer writes and doesn’t get ack from broker, so rewrites, incorrect ack or ack lost, consumer reads, offset is not committed, crashes, reads again. Things are ties tooffset id and commit type of transaction definitions
+
+
+
+  Kafka never promises “no duplicates” unless you explicitly enable transactions.
+
+  ❌ Wrong answer:
+
+“Kafka handles duplicates”
+
+✅ Correct answer:
+
+Applications handle duplicates
+
+
+
+Ways for Same
+
+Real strategies:
+
+Event has a unique eventide, Consumer stores processed event Ids (DB / cache), If eventide seen → skip
+
+Or:
+
+Use UPSERT / MERGE, use unique constraints in DB, Make writes idempotent
+
+Idempotent =
+
+processing the same message multiple times produces the same final result
+
+
+
+
+
+b. replays & History – but the message would be gone, how are you going to reread things.
+
+Backfill – bug identified, fixed, reproduce correct the record.
+
+What replay really means Replay is not a bug. It’s a feature.
+
+Replay happens when:
+
+· Consumer resets offset manually
+
+· New consumer group starts from earliest
+
+· Consumer crashes before committing offset
+
+Kafka allows replay because:
+
+· Messages are not deleted after consumption
+
+· Offsets are consumer-side state
+
+
+
+
+
+c. ordering-
+
+what is meant by ordering,  
+
+
+
+❌ Mistake 1: No key (round-robin)
+
+Producer sends without key.
+
+Kafka distributes messages across partitions:
+
+Partition 1 → OrderCreated
+
+Partition 4 → OrderPaid
+
+Partition 2 → OrderShipped
+
+Now:
+
+No global ordering
+Consumer sees events out of sequence
+
+
+
+
+
+
+
+
+
+
+
+
+
+4. Why partitions within topics
+
+This is the key insight:
+
+Partitions exist to scale throughput and parallelism, not ordering.
+
+Without partitions:
+
+One broker
+One disk
+One consumer
+Throughput bottleneck
+
+
+
+Ordering vs Parallelism is topic vs partition
+
+
+
+5. hardware side -
+
+
+
+Why disk is not the bottleneck here
+
+Kafka does:
+
+Sequential appends (no random writes)
+Uses OS page cache
+Avoids fsync on every message
+
+So in practice:
+
+Writes go to memory (page cache)
+Flushed to disk asynchronously
+Reads often served from cache
+
+This is why Kafka can do millions of msgs/sec.
+
+❌ Traditional DB:
+
+random reads/writes
+indexes
+locks
+fsyncs
+
+
+
+3️⃣ Append-only log = performance gold
+
+Kafka never:
+
+updates messages
+deletes individual messages
+seeks randomly on write path
+
+Flow:
+
+Producer → append to log → OS cache → disk later
+
+This is insanely cache-friendly.
+
+
+
+This is a very good follow-up. You’re basically asking:
+
+“What exactly does append-only buy Kafka, and what would the alternative cost?”
+
+Let’s go deep and concrete.
+
+1️⃣ What “append-only log” really means (mechanically)
+
+Append-only log =
+
+Every new message is written only at the end of a file
+No updates
+No deletes in place
+No reordering
+No random seeks on the write path
+
+So, the write pointer always moves forward.
+
+| msg1 | msg2 | msg3 | msg4 | msg5 | --> append here
+
+7️⃣ Key insight (this is the big one)
+
+Kafka chooses immutability over flexibility.
+
+Immutability gives:
+
+speed
+simplicity
+replay
+fault tolerance
+
+Cost:
+
+no random-access writes
+no per-message delete
+ordering only per partition
+
+one hot partition issue.
+
+
+
+
+
+
+
+
+
+
+
+Kinesis –
+
+
+
+Q to ask
+
+How is it different from Kafka, how it works, how it overcomes the challenge, how it stores message, why better over DB.
+
+
+
+
+
+
+
+AWS stores data (you don’t manage brokers)
+
+So, the mapping is:
+
+Kafka
+
+Kinesis
+
+Topic
+
+Stream
+
+Partition
+
+Shard
+
+Offset
+
+Sequence number / checkpoint
+
+Consumer group
+
+Enhanced Fan-Out or shared throughput consumers
+
+Retention config
+
+Retention period (default 24h, up to 365 days)
+
+
+
+
+
+Each record has:
+
+partition key (important!)
+sequence number (monotonic per shard)
+data payload
+timestamp
+
+Internally:
+
+Data is stored append-only per shard
+Like Kafka partition logs, but you don’t see segments/index files
+
+Retention works like:
+
+After retention window expires → data is deleted automatically.
+
+So Kinesis is like:
+
+✅ append-only log
+
+❌ not meant for long-term storage (that’s why S3 integration exists)
+
+
+
+
+
+How consuming works
+
+Consumers pull records using:
+
+GetRecords
+GetShardIterator
+
+Shard iterator types:
+
+TRIM_HORIZON (start from oldest retained)
+LATEST (start from newest)
+AT_SEQUENCE_NUMBER
+AFTER_SEQUENCE_NUMBER
+
+Consumers maintain progress using checkpoints (often stored in DynamoDB when using KCL).
+
+So Kafka has:
+
+consumer offsets stored in Kafka
+
+Kinesis has:
+
+checkpoints stored externally (DynamoDB, or managed by Lambda event source mapping)
+
+
+
+
+
+8. Key AWS-native integrations (important for interviews)
+
+Kinesis Data Streams integrates with:
+
+Lambda consumers
+Kinesis Data Firehose (delivery to S3/Redshift/OpenSearch)
+Glue streaming ETL
+Flink apps (Kinesis Data Analytics)
+
+In AWS pipelines, Kinesis is rarely the final storage.
+
+Usually it’s:
+
+Kinesis → Firehose → S3 → Athena/Glue/Redshift
+
+
+
+
+
+hash(partition key) → 128-bit hash space → shard range
+
+
+
+
+
+
+
+4. Now the star: Sequence Numbers
+
+Each record stored in a shard gets a sequence number.
+
+Key properties:
+
+Assigned by Kinesis, not producer
+Monotonically increasing within a shard
+Not contiguous
+Meaningless across shards
+
+Think of it as:
+
+“offset-like, but shard-scoped and opaque”
+
+
+
+Consumers don’t read by offset index like Kafka.
+
+They read using iterators.
+
+Iterator types:
+
+TRIM_HORIZON
+
+start from oldest retained record
+
+LATEST
+
+start from new incoming records
+
+AT_SEQUENCE_NUMBER
+
+start from this exact sequence number
+
+AFTER_SEQUENCE_NUMBER
+
+start after this sequence number
+
+
+
+
+
+6. Checkpointing (critical difference from Kafka)
+
+Kafka:
+
+offsets stored inside Kafka
+per consumer group
+
+Kinesis:
+
+checkpoints stored outside the stream
+usually in DynamoDB (via KCL)
+or managed implicitly (Lambda event source mapping)
+
+Checkpoint = { shard_id → last_processed_sequence_number }
+
+If consumer crashes:
+
+it restarts from last checkpoint
+anything after → reprocessed
+
+👉 This is why duplicates happen.
+
+Because checkpoint update is not atomic with processing.
+
+
+
+
+
+How streaming works-
+
+Unlike batch systems:
+
+you don’t wait for files to close
+you don’t wait for partitions to complete
+
+That’s the core of streaming
+
+
+
+1. Data is unbounded
+
+There is no natural “end”.
+
+clicks
+logs
+transactions
+events
+
+If your SQL runs on a fixed dataset, that’s batch.
+
+
+
+
+
+
+
+Streaming problem
+
+
+
+late events
+
+duplicates
+
+out-of-order data
+
+
+
+5. The fundamental tradeoff triangle
+
+You always choose 2:
+
+Low latency
+High accuracy
+Low cost
+
+Batch chooses:
+
+accuracy + low cost
+
+Streaming chooses:
+
+low latency + acceptable accuracy
+
+Why late events happen
+
+network delays
+retries
+mobile/offline devices
+backpressure in upstream systems
+shard / partition lag
+
+
+
+
+
+
+
+6. Practical handling strategy (real systems)
+
+Most real pipelines do this:
+
+1. Accept at-least-once delivery
+
+2. Use event time + watermarks
+
+3. Allow bounded lateness (e.g., 5–10 minutes)
+
+4. Deduplicate by event_id
+
+5. Correct downstream results if needed
+
+6. Periodically reconcile with batch
+
+
+
+
+
+4. One-line mapping (memorize this)
+
+Problem
+
+Primary solution
+
+Late events
+
+Watermarks + allowed lateness
+
+Duplicates
+
+Idempotency + dedup keys
+
+Out-of-order
+
+Partitioning + event-time ordering
+
+Late event (wait,
+
+Event time, allowed reprocess), duplicate (on system side handle it)
+
+
+
+
+
+
+
+Not so common
+
+
+
+where can system f up
+
+
+
+common sense ques real life and generic answers -
+
+
+
+1. Too much data spike came
+
+2. Broker exhausted – disk issue
+
+3. consumer exhausted – job processing issue , or network issue , or skew issue
+
+4.reporting side issue, datawrites chokes , small batch
+
+
+
+
+
+Streaming scaling problems happen because every stage has a max throughput:
+
+Producer → Broker → Consumer → Sink
+
+
+
+ increasing parallelism (partitions/consumers)
+
+ increasing buffer capacity (Kafka retention)
+
+ increasing sink throughput (batching/sharding)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

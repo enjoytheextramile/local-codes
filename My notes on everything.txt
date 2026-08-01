@@ -1,0 +1,432 @@
+Spark
+
+Spark -
+ Driver: runs the Spark application main process. Creates Spark Context, builds DAG, splits into stages/tasks, schedules tasks.
+
+ Executors: JVM processes launched on worker machines that execute tasks and store cached data/shuffle data.
+
+ Cluster Manager: allocates resources (CPU/memory) and launches executors (YARN / Kubernetes / Standalone / Mesos).
+
+
+
+Who talks to whom:
+
+Driver talks to cluster manager to request executors.
+
+Driver talks to executors to send tasks.
+
+Executors send results/metrics back to driver.
+
+
+
+
+
+Spark is all about optimized executions
+
+Structure basic – 1 &2
+
+Transformation – 5 & 6 & 7 & 11
+
+Optimization- 3 &4 & 6 & 7 & 8& 9 & 11 & 17
+
+
+
+read = shuffle read, sort+join mergesortjoin
+
+
+
+What causes shuffle?
+
+Shuffle happens when Spark must re-distribute data across executors.
+
+Common operations causing shuffle:
+
+groupBy reduceByKey join (unless broadcast) distinct repartition orderBy/sort
+
+
+
+conclusion master node does not do allocation , it creates session and DAG etc. ask for compute etc. allocation is still done by RM
+
+spill – 5 partitions join with 1 partition create 200 partitions
+
+
+
+Topic list -
+
+
+
+1. Spark Fundamentals
+
+Spark ecosystem overview (Core, SQL, Streaming, MLlib, GraphX)
+Spark vs Hadoop MapReduce – why new MR required advantages over old.
+Spark vs Flink vs Presto/Trino
+Lazy evaluation- why logically
+Transformations vs Actions - materialize the result
+Narrow vs Wide transformations – dependency between two operations
+DAG, stages, tasks – stages, when max compression done final result – DAG example reading
+
+2. Spark Architecture (Must Know)
+
+Driver, Executor, Worker node, sparkContext, Spark Session - RM vs master node
+Cluster managers (YARN, Kubernetes, Standalone)
+Application, Job, Stage, Task
+Task scheduling
+Task locality (process/node/rack locality)
+Executors’ lifecycle, dynamic allocation
+Heartbeats, executor failures
+
+3. Spark Execution Internals
+
+Logical plan vs physical plan – actual vs sql
+Query plan (explain, explain(true)) – DAG visualization
+Catalyst Optimizer – query optimization
+Tungsten execution engine
+WholeStageCodeGen
+Vectorized Parquet/ORC reader
+Code generation vs interpreted execution
+Adaptive Query Execution (AQE)
+
+4. RDD, DataFrame, Dataset
+
+RDD vs DataFrame vs Dataset – rdd is an object , DF is a structutred unit core difference and how stored in memory why better
+When RDD is still useful
+Schema inference
+Encoders (Dataset in Scala)
+Serialization (Java vs Kryo)
+Tungsten binary format
+
+5. Partitioning Concepts (Very Important)
+
+Partitions vs blocks vs worker node
+Partition count selection strategy
+Repartition vs Coalesce – what is the purpose example
+HashPartitioner, RangePartitioner – best is to use key and repartiition
+Partition pruning
+PartitionBy on write
+Bucketing (bucketBy + sortBy)
+Shuffle partitions config (spark.sql.shuffle.partitions) – actual code .
+Small files problem
+
+6. Shuffles & Stage Boundaries (Interview Favorite)
+
+What causes shuffle
+Shuffle write / shuffle read
+Shuffle spill to disk
+Shuffle file consolidation
+Map-side combine (reduceByKey vs groupByKey)
+Shuffle service (external shuffle service)
+
+7. Joins (Most Asked)
+
+Join types (inner/left/right/full/semi/anti)
+Broadcast Hash Join – syntax How to force: from pyspark.sql.functions import broadcast: df_big.join(broadcast(df_small), "key")
+Shuffle Hash Join
+Sort Merge Join
+Cartesian join
+Join hints (broadcast, merge, etc.)
+Join reordering (CBO)
+Skew join handling - code
+AQE join strategy switching
+Bucketing + join optimization
+
+8. Data Skew & Hot Partitions
+
+Detect skew (Spark UI, skewed partitions) - code
+Skew in join vs skew in aggregation
+Salting technique
+Skew mitigation with AQE – syntax - spark.conf.set("spark.sql.adaptive.enabled", "true")
+Custom partitioning
+Pre-aggregation strategies Bad: join huge dataset first then aggregate Better:aggregate clickstream first, then join aggregated output
+
+9. Caching, Persistence, Checkpointing
+
+cache() vs persist()
+Storage levels (MEMORY_ONLY, MEMORY_AND_DISK, DISK_ONLY) – imp code AQE detects skewed partitions at runtime and breaks them into smaller sub-partitions to avoid straggler tasks.
+Eviction, recomputation
+Checkpoint vs persist
+Local checkpoint vs reliable checkpoint
+Lineage truncation – lineage definiton vs checkpoint file
+When caching hurts
+
+10. Fault Tolerance & Recovery
+
+Lineage based recomputation
+Speculative execution
+Executor failure handling
+Driver failure (client vs cluster mode)
+Stage retry
+Shuffle data loss recovery
+
+11. Spark SQL (Core Interview Area)
+
+DataFrame API vs SQL API
+Spark SQL functions
+Window functions
+Aggregations
+GroupBy vs rollup/cube
+Column pruning
+Predicate pushdown
+Filter pushdown
+Projection collapse
+Constant folding
+Null handling
+
+12. UDFs / Performance Pitfalls
+
+Scala UDF vs Python UDF vs Pandas UDF
+Why Python UDFs are slow (serialization + JVM boundary)
+Arrow optimization
+Avoiding UDFs using built-in functions
+Typed aggregations
+
+13. File Formats & IO
+
+Parquet internals (row groups, columnar)
+ORC
+Avro
+JSON/CSV pitfalls
+Compression codecs (snappy, gzip, zstd)
+Schema evolution
+Partitioned datasets in S3/HDFS
+Predicate pushdown support per format
+
+14. Spark on Cloud (Practical)
+
+Spark on EMR
+Spark on Databricks
+Spark on Kubernetes
+Spark on GCP Dataproc
+S3 consistency, file committers
+S3 read/write optimization
+Glue vs EMR Spark differences
+
+15. Streaming (Spark Structured Streaming)
+
+DStreams vs Structured Streaming
+Micro-batch model
+Trigger intervals
+Output modes (append/update/complete)
+Watermarking
+Late events
+Stateful streaming
+Checkpoint directory usage
+Exactly-once vs at-least-once
+Kafka source offsets & commits
+
+16. Kafka + Spark Integration
+
+Spark Kafka connector
+Offset handling
+Consumer groups vs Spark streaming
+Backpressure
+Kafka lag monitoring
+Exactly-once semantics (sink dependent)
+Idempotent writes
+
+17. Optimization & Tuning (Senior-Level)
+
+Executor sizing (cores/memory) - code
+Parallelism tuning
+Shuffle partitions tuning
+Broadcast threshold tuning
+GC tuning basics
+Spill monitoring
+Memory fractions (execution vs storage)
+Adaptive Query Execution configs
+Dynamic allocation pros/cons
+
+18. Spark UI & Debugging
+
+Spark UI jobs/stages/tasks interpretation
+DAG visualization
+Shuffle read/write metrics
+Skew detection in UI
+Spill metrics (memory/disk)
+Executor logs debugging
+SQL tab plan debugging
+
+19. Writing Data (Common Issues)
+
+write modes (append/overwrite) - done
+partitionBy write
+overwrite pitfalls on S3
+file compaction strategy
+coalesce before write – use?
+repartition before write
+commit protocols – imp overall
+
+20. Memory Management
+
+JVM memory model
+Execution memory vs storage memory
+Caching memory pressure
+GC pauses
+Off-heap memory
+Broadcast memory usage
+
+21. Advanced Concepts (Nice to Know)
+
+Custom partitioners (RDD)
+Accumulators, broadcast variables
+MapPartitions vs map
+Spark listeners
+Structured Streaming state store
+Delta Lake / Iceberg / Hudi concepts (if applicable)
+
+22. Real-World Failure Scenarios
+
+OutOfMemory during shuffle
+Executor lost
+Stage stuck due to skew
+Too many tasks due to small files
+Slow S3 writes
+Long lineage / recomputation loops
+Duplicate writes in streaming
+Checkpoint corruption issues
+
+Because DAG is just the plan. Spark needs data recovery.
+If executor dies, Spark doesn’t need only the DAG; it needs to know: which partition was lost what parent partitions were used what transformations created it That is lineage.
+
+
+
+
+
+
+
+23. Interview-Specific Topics
+
+Spark vs Hive vs Presto vs Trino
+Spark vs Flink streaming differences
+Lambda vs Kappa with Spark
+Batch vs streaming tradeoffs
+Designing Spark pipelines for SLA
+Data quality handling in Spark jobs
+
+
+
+
+
+
+
+Why we care about lineage and when it can cause issue and checkpointing is required , we can intentionally trigger an action to break DAG and persist data , so the things lineage hold is for crash handling only?
+
+
+
+👉 Triggering an action does NOT break lineage.
+
+It only executes the DAG. The DAG (lineage) is still there.
+
+What is lineage actually?
+
+Lineage is Spark’s internal recipe of how to recompute a DataFrame/RDD from source.
+
+Example:
+
+read -> filter -> join -> groupBy -> agg -> window -> ...
+
+Spark stores this as a logical + physical plan (for DF) / dependency graph (for RDD).
+
+Why do we care about lineage?
+
+Because Spark uses lineage for fault tolerance:
+
+If an executor dies and loses a partition, Spark says:
+
+no problem, I’ll recompute that partition using lineage.
+
+That’s the main purpose.
+
+So yes: lineage is heavily related to crash recovery.
+
+
+
+
+
+1. Long lineage = expensive recomputation
+
+If you have a huge chain of transformations and you do:
+
+df1 = df.transform1().transform2()....transform50()
+
+df1.count()
+
+df1.write.parquet(...)
+
+df1.show()
+
+Even though you already executed .count(), Spark may recompute large parts again for the write/show unless cached/checkpointed.
+
+
+
+Why caching/persist is NOT the same as checkpointing
+
+
+
+If cached data is evicted (memory pressure) → Spark recomputes using lineage again
+
+Writes data to reliable storage (HDFS/S3)
+
+
+
+
+
+When checkpointing is required (real scenarios)
+
+🔥 1. Streaming (Structured Streaming)
+
+Checkpoint is mandatory because Spark must store:
+
+offsets
+state store info
+progress tracking
+
+Without checkpoint → you lose exactly-once guarantees.
+
+🔥 2. Iterative algorithms
+
+Graph processing / ML loops:
+
+ Lineage = recipe
+
+ Cache = keep cooked food in fridge (but can spoil/evict)
+
+ Checkpoint = save cooked food permanently in freezer (and throw away recipe)
+
+
+
+
+
+
+
+Actual Scenario-
+
+
+
+in Unproc & proc
+
+
+
+1. Batch processing to avoids skews ( row = act_val_dtm distinct can be 20 ? and batch =5 process 20 or 35 iterations inbatch of 5 ) (every 4 iteration checkpoint the data, every 5 iteration union it with temp )don’t keep df1 df2 df3 unioned in dag , write to temp location – df left should not be like df1 union df3 , it should be temp
+
+2. Explain complete adhoc thing and challenges first
+
+3. Breaking lineage
+
+4. Effective joins key based
+
+5. writing to disk to avoid spills and garbage collection
+
+6. nested window OVR, modularity.
+
+7. Press release optimization
+
+8.  
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,84 @@
+reasoning
+DM-
+
+what is stored- dimension vs facts
+what about if record changes - SCD
+start vs snowflake - image
+grain - coarse or fine
+normalization - why it is reqd- breaking down to redundancy removal
+
+why these all exist - efficiency and choice of schema
+
+real life issues - let say things are changing, data is large , query is slow etc etc , late arrival, handle changes diff kind of
+
+
+link everything to a pipeline requirement and design/optimize -
+
+
+Snapshot Fact Tables:
+What are periodic snapshot fact tables?
+Design one for tracking daily account balances for a bank
+How is this different from a transaction fact table?
+
+Lambda/Kappa Architecture: How would you design a fact table that supports both:
+Real-time streaming updates
+Batch historical processing
+
+Partitioning Strategy: Design a partitioning strategy for a Sales fact table with:
+5 years of data
+2 billion rows
+Queries typically filter by date and region
+What partitioning scheme would you use?
+Indexing Strategy: For a fact table with dimensions: Date, Product, Store, Customer
+What indexes would you create?
+What is the impact on INSERT performance?
+
+interview questions -
+
+
+
+everything about pipeline what to be ensured technically -
+and how to handle things
+
+1. Data schema issue if schema changes are not handled properly
+2. SQL inefficiency and SLA issues if tables are not normalized correctly
+3. if dataframes are not optimized/skewed etc or distibuted correctly , joins and other operations will become inefficient
+4. data arriving late, data replays scenarios, out of order data
+5. Data choking at source or sink at any point in the ETL pipeline bevause of resources
+6. CDC not correct in transformation-> duplicates
+7. too large of a data set let say 1 TB , not parralellized/ batched correctly causing processing bottlnecks
+8. incorrect data coming from upstream itself , how to handle that kind problems
+9. how to reprocess things which for whatsoever reason got dropped whats the coverage percent now?
+there is a reason at a certain point why things are breaking. possible reason.
+ 
+
+
+
+
+ETL Pipeline Operational Strategies - too good of objectives and procedures -
+ 
+1. Prevention: How do you stop issues before they happen?
+Implement schema registries with compatibility checks (Confluent Schema Registry, AWS Glue).
+Use data contracts between teams defining SLAs and formats. Apply CI/CD testing with sample datasets catching issues pre-production.
+Configure resource quotas and auto-scaling preventing resource exhaustion.
+Implement backpressure mechanisms in streaming (Kafka consumer lag monitoring, rate limiting).
+Use partitioning strategies based on access patterns (date-based for time-series).
+Enforce data validation rules at ingestion (Great Expectations, Deequ).
+Set appropriate watermarks for late data.
+Use idempotent writes (MERGE/UPSERT vs APPEND).
+Deploy guardrails like circuit breakers and retry policies with exponential backoff.
+
+
+2. Detection: How do you know something broke?
+Implement SLA monitoring: data freshness checks, processing lag (Kafka consumer lag), end-to-end latency.
+
+
+
+3. Recovery: How do you fix it?
+Design checkpoint/WAL mechanisms enabling resume from failure point (Spark checkpoints, Kafka offsets).
+Create backfill frameworks with date-range parameters for historical reprocessing.
+Use dead-letter queues capturing failed records for investigation and replay.
+Implement automated rollback triggers on data quality threshold breaches.
+Test recovery procedures regularly through chaos engineering.
+
+4. Attribution: How do you know what caused it?

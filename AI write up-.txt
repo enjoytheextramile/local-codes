@@ -1,0 +1,39 @@
+AI write up-
+
+
+
+Why it works, why not,
+base line on its effectivity- proofs.....
+
+
+
+Base line - why it is useful, it is doing fuzzy matching and all , but what does it explore on its own, when it is supplemented with the data, either in form of RAG or current prompt , if prompt is strong enough will it ask correct que in its flow
+
+1.How error detection is working
+
+setup -
+
+MD files , orchestrator, parallel thread.
+ques on RAGs and on orchestrator logic,
+difference between LLM(Claude), Agent, Agentic Ai(Claude code)
+retrieval , augment , generation - store prev or dict - match with current prompt - send it to agent.
+
+enough to speak on this.
+
+why it is failing. 
+
+setup this - and run .
+
+
+2. Claude MD structure and MCP setups and the token optimize
+
+
+3. EMTN setup Jenkins approach
+
+
+4. Definition in XGBoost -> data
+
+5. 
+
+
+ 

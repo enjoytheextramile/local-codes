@@ -1,0 +1,6 @@
+Prod System Design Question
+
+1. Design a flash sale platform
+
+ask questions on no of users , no of transactions, what are non negotiable metrics
+do not assume anything
